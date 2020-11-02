@@ -69,7 +69,7 @@ library Blake2b {
         // it from big-endian to little-endian, which is boring, so, hopefully,
         // 24 bits should be more than enough.
         uint input_counter = 0;
-        require(data.length <= (2 << 24) - 1);
+        require(data.length <= (1 << 24) - 1);
 
         // This is the memory location where the input data resides.
         uint inp_ptr;
