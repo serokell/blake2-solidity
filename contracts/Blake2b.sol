@@ -8,6 +8,8 @@ pragma experimental ABIEncoderV2;
 
 library Blake2b {
     uint256 constant public BLOCK_SIZE = 128;
+    uint256 constant public WORD_SIZE = 32;
+    // And we rely on the fact that BLOCK_SIZE % WORD_SIZE == 0
 
     // Initialise the state with a given `key` and required `out_len` hash length.
     // This is a bit misleadingly called state as it not only includes the Blake2 state,
@@ -69,68 +71,62 @@ library Blake2b {
         uint input_counter = 0;
         require(data.length <= (2 << 24) - 1);
 
+        // This is the memory location where the input data resides.
+        uint inp_ptr;
+        assembly {
+            inp_ptr := add(data, 32)
+        }
+
         // This is the memory location where the "data block" starts for the precompile.
-        uint state_ptr;
+        uint msg_ptr;
         assembly {
             // The `rounds` field is 4 bytes long and the `h` field is 64-bytes long.
             // Also the length stored in the bytes data type is 32 bytes.
-            state_ptr := add(state, 100)
+            msg_ptr := add(state, 100)
         }
 
-        // This is the memory location where the input data resides.
-        uint data_ptr;
-        assembly {
-            data_ptr := add(data, 32)
-        }
-
-        uint len = data.length;
+        uint remains = data.length;
         do {
-            if (len < BLOCK_SIZE) {
-                // Need to pad data with zeroes.
-                // How many whole 32-byte chunks the data occupies?
-                uint chunks = len / BLOCK_SIZE;
+            uint out_ptr = msg_ptr;
 
-                // Pad the rest
-                // A 128-byte block consist of 4 32-byte chunks.
-                for (uint i = chunks; i < 4; ++i) {
-                    uint offset = 32 * i;
-                    assembly {
-                        mstore(add(state_ptr, offset), 0)
-                    }
-                }
-            }
-
-            // Now copy over whole 32-byte blocks (but no more than 4 of them)
-            uint offset = 0;
-            for (offset; offset < BLOCK_SIZE && len >= 32; offset += 32) {
+            // Copy full words first.
+            while (remains >= WORD_SIZE && out_ptr < msg_ptr + BLOCK_SIZE) {
                 assembly {
-                    mstore(add(state_ptr, offset), mload(data_ptr))
-                    data_ptr := add(data_ptr, 32)
+                    mstore(out_ptr, mload(inp_ptr))
                 }
-                len -= 32;
+                inp_ptr += WORD_SIZE;
+                out_ptr += WORD_SIZE;
+                remains -= WORD_SIZE;
+            }
+            input_counter += out_ptr - msg_ptr;
+
+            // Now copy the remaining <32 bytes.
+            if (remains > 0 && out_ptr < msg_ptr + BLOCK_SIZE) {
+                uint mask = (1 << (8 * (WORD_SIZE - remains))) - 1;
+                assembly {
+                    mstore(out_ptr, and(mload(inp_ptr), not(mask)))
+                }
+                // inp_ptr += remains;  // No need to udpate as we are done here
+                out_ptr += WORD_SIZE;
+                input_counter += remains;
+                remains = 0;
             }
 
-            // Now copy over the reamining individual bytes
-            uint available = BLOCK_SIZE - offset;
-            uint remaining = available <= len ? available : len;  // remaining < 32
-            // [begin] FIXME: I am stupid and I have no idea how else to do this
-            bytes memory tmp = new bytes(32);  // I hope it is zero-initialised...
-            uint data_off;
-            assembly {
-                data_off := sub(data_ptr, data)
-                data_off := sub(data_off, 32)
-            }
-            for (uint i = 0; i < remaining; ++i) {
-                tmp[i] = data[data_off + i];
-            }
-            assembly {
-                mstore(add(state_ptr, offset), mload(add(tmp, 32)))
-                data_ptr := add(data_ptr, remaining)
-            }
-            // [end] FIXME
+            // If this block is the last one.
+            if (remains == 0) {
+                // Pad.
+                while (out_ptr < msg_ptr + BLOCK_SIZE) {
+                    assembly {
+                        mstore(out_ptr, 0)
+                    }
+                    out_ptr += WORD_SIZE;
+                }
 
-            input_counter += offset + remaining;
-            len -= remaining;
+                // Set the last block indicator.
+                assembly {
+                    mstore8(add(state, 244), 1)
+                }
+            }
 
             // Set length field (little-endian) for maximum of 24-bits.
             assembly {
@@ -139,18 +135,9 @@ library Blake2b {
                 mstore8(add(state, 230), and(shr(16, input_counter), 0xff))
             }
 
-            // Set the last block indicator.
-            // Only if we've processed all input.
-            if (len == 0) {
-                assembly {
-                    // Writing byte 212 here.
-                    mstore8(add(state, 244), 1)
-                }
-            }
-
             // Call the precompile
             call_function_f(state);
-        } while (len > 0);
+        } while (remains > 0);
     }
 
     // Compute a hash of bytes.
