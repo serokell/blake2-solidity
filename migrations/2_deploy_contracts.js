@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2020 Serokell <https://serokell.io/>
+//
+// SPDX-License-Identifier: Apache-2.0
+
 const Blake2b = artifacts.require("Blake2b");
 const Blake2bTest = artifacts.require("Blake2bTest");
 
