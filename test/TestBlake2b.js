@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+//
+// SPDX-License-Identifier: Apache-2.0
+
 const Blake2bTest = artifacts.require('Blake2bTest.sol');
 const TestVectors = require('./blake2ref/testvectors/blake2-kat.json');
 

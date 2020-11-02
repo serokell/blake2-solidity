@@ -1,10 +1,7 @@
-/*
- * Blake2b library in Solidity using EIP-152
- *
- * Copyright (C) 2019 Alex Beregszaszi
- *
- * License: Apache 2.0
- */
+// Copyright (C) 2019 Alex Beregszaszi
+// SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+//
+// SPDX-License-Identifier: Apache-2.0
 
 pragma solidity ^0.5.0;
 pragma experimental ABIEncoderV2;

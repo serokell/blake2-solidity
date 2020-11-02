@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+#
+# SPDX-License-Identifier: Apache-2.0
+
 [submodule "test/blake2ref"]
 	path = test/blake2ref
 	url = https://github.com/blake2/blake2

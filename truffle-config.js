@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Use this file to configure your truffle project. It's seeded with some
  * common settings for different networks and features like migrations,

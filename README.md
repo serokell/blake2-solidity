@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # blake2-solidity
 
 This is a Solidity library aiming to implement BLAKE2.

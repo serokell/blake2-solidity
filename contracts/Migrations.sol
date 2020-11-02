@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+//
+// SPDX-License-Identifier: Apache-2.0
+
 pragma solidity >=0.4.21 <0.6.0;
 
 contract Migrations {
