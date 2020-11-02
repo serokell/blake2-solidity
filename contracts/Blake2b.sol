@@ -1,5 +1,5 @@
-// Copyright (C) 2019 Alex Beregszaszi
 // SPDX-FileCopyrightText: 2019 Alex Beregszaszi
+// SPDX-FileCopyrightText: 2020 Serokell <https://serokell.io/>
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -7,56 +7,31 @@ pragma solidity ^0.5.0;
 pragma experimental ABIEncoderV2;
 
 library Blake2b {
-    struct Instance {
-        // This is a bit misleadingly called state as it not only includes the Blake2 state,
-        // but every field needed for the "blake2 f function precompile".
-        //
-        // This is a tightly packed buffer of:
-        // - rounds: 32-bit BE
-        // - h: 8 x 64-bit LE
-        // - m: 16 x 64-bit LE
-        // - t: 2 x 64-bit LE
-        // - f: 8-bit
-        bytes state;
-        // Expected output hash length. (Used in `finalize`.)
-        uint out_len;
-        // Data passed to "function F".
-        // NOTE: this is limited to 24 bits.
-        uint input_counter;
-    }
+    uint256 constant public BLOCK_SIZE = 128;
 
     // Initialise the state with a given `key` and required `out_len` hash length.
-    function init(bytes memory key, uint out_len)
-        internal
-        view
-        returns (Instance memory instance)
+    // This is a bit misleadingly called state as it not only includes the Blake2 state,
+    // but every field needed for the "blake2 f function precompile".
+    //
+    // This is a tightly packed buffer of:
+    // - rounds: 32-bit BE
+    // - h: 8 x 64-bit LE
+    // - m: 16 x 64-bit LE
+    // - t: 2 x 64-bit LE
+    // - f: 8-bit
+    function init(uint out_len)
+        private
+        pure
+        returns (bytes memory state)
     {
-        // Safety check that the precompile exists.
-        // TODO: remove this?
-        // assembly {
-        //    if eq(extcodehash(0x09), 0) { revert(0, 0) }
-        //}
-
-        reset(instance, key, out_len);
-    }
-
-    // Initialise the state with a given `key` and required `out_len` hash length.
-    function reset(Instance memory instance, bytes memory key, uint out_len)
-        internal
-        view
-    {
-        instance.out_len = out_len;
-        instance.input_counter = 0;
-
         // This is entire state transmitted to the precompile.
         // It is byteswapped for the encoding requirements, additionally
         // the IV has the initial parameter block 0 XOR constant applied, but
         // not the key and output length.
-        instance.state = hex"0000000c08c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-        bytes memory state = instance.state;
+        state = hex"0000000c08c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
         // Update parameter block 0 with key length and output length.
-        uint key_len = key.length;
+        uint key_len = 0;
         assembly {
             let ptr := add(state, 36)
             let tmp := mload(ptr)
@@ -66,23 +41,15 @@ library Blake2b {
         }
 
         // TODO: support salt and personalization
-
-        if (key_len > 0) {
-            require(key_len == 64);
-            // FIXME: the key must be zero padded
-            assert(key.length == 128);
-            update(instance, key, key_len);
-        }
     }
 
     // This calls the blake2 precompile ("function F of the spec").
     // It expects the state was updated with the next block. Upon returning the state will be updated,
     // but the supplied block data will not be cleared.
-    function call_function_f(Instance memory instance)
+    function call_function_f(bytes memory state)
         private
         view
     {
-        bytes memory state = instance.state;
         assembly {
             let state_ptr := add(state, 32)
             if iszero(staticcall(not(0), 0x09, state_ptr, 0xd5, add(state_ptr, 4), 0x40)) {
@@ -91,21 +58,22 @@ library Blake2b {
         }
     }
 
-    // This function will split blocks correctly and repeatedly call the precompile.
-    // NOTE: this is dumb right now and expects `data` to be 128 bytes long and padded with zeroes,
-    //       hence the real length is indicated with `data_len`
-    function update_loop(Instance memory instance, bytes memory data, uint data_len, bool last_block)
+    function update_finalise(bytes memory state, bytes memory data)
         private
         view
     {
-        bytes memory state = instance.state;
-        uint input_counter = instance.input_counter;
+        // NOTE [input size]
+        // Technically, this can be 128 bits, but we need to manually convert
+        // it from big-endian to little-endian, which is boring, so, hopefully,
+        // 24 bits should be more than enough.
+        uint input_counter = 0;
+        require(data.length <= (2 << 24) - 1);
 
         // This is the memory location where the "data block" starts for the precompile.
         uint state_ptr;
         assembly {
             // The `rounds` field is 4 bytes long and the `h` field is 64-bytes long.
-            // Also adjust for the size of the bytes type.
+            // Also the length stored in the bytes data type is 32 bytes.
             state_ptr := add(state, 100)
         }
 
@@ -116,34 +84,53 @@ library Blake2b {
         }
 
         uint len = data.length;
-        while (len > 0) {
-            if (len >= 128) {
-                assembly {
-                    mstore(state_ptr, mload(data_ptr))
-                    data_ptr := add(data_ptr, 32)
+        do {
+            if (len < BLOCK_SIZE) {
+                // Need to pad data with zeroes.
+                // How many whole 32-byte chunks the data occupies?
+                uint chunks = len / BLOCK_SIZE;
 
-                    mstore(add(state_ptr, 32), mload(data_ptr))
-                    data_ptr := add(data_ptr, 32)
-
-                    mstore(add(state_ptr, 64), mload(data_ptr))
-                    data_ptr := add(data_ptr, 32)
-
-                    mstore(add(state_ptr, 96), mload(data_ptr))
-                    data_ptr := add(data_ptr, 32)
+                // Pad the rest
+                // A 128-byte block consist of 4 32-byte chunks.
+                for (uint i = chunks; i < 4; ++i) {
+                    uint offset = 32 * i;
+                    assembly {
+                        mstore(add(state_ptr, offset), 0)
+                    }
                 }
-
-                len -= 128;
-                // FIXME: remove this once implemented proper padding
-                if (data_len < 128) {
-                    input_counter += data_len;
-                } else {
-                    data_len -= 128;
-                    input_counter += 128;
-                }
-            } else {
-                // FIXME: implement support for smaller than 128 byte blocks
-                revert();
             }
+
+            // Now copy over whole 32-byte blocks (but no more than 4 of them)
+            uint offset = 0;
+            for (offset; offset < BLOCK_SIZE && len >= 32; offset += 32) {
+                assembly {
+                    mstore(add(state_ptr, offset), mload(data_ptr))
+                    data_ptr := add(data_ptr, 32)
+                }
+                len -= 32;
+            }
+
+            // Now copy over the reamining individual bytes
+            uint available = BLOCK_SIZE - offset;
+            uint remaining = available <= len ? available : len;  // remaining < 32
+            // [begin] FIXME: I am stupid and I have no idea how else to do this
+            bytes memory tmp = new bytes(32);  // I hope it is zero-initialised...
+            uint data_off;
+            assembly {
+                data_off := sub(data_ptr, data)
+                data_off := sub(data_off, 32)
+            }
+            for (uint i = 0; i < remaining; ++i) {
+                tmp[i] = data[data_off + i];
+            }
+            assembly {
+                mstore(add(state_ptr, offset), mload(add(tmp, 32)))
+                data_ptr := add(data_ptr, remaining)
+            }
+            // [end] FIXME
+
+            input_counter += offset + remaining;
+            len -= remaining;
 
             // Set length field (little-endian) for maximum of 24-bits.
             assembly {
@@ -157,45 +144,42 @@ library Blake2b {
             if (len == 0) {
                 assembly {
                     // Writing byte 212 here.
-                    mstore8(add(state, 244), last_block)
+                    mstore8(add(state, 244), 1)
                 }
             }
 
             // Call the precompile
-            call_function_f(instance);
-        }
-
-        instance.input_counter = input_counter;
+            call_function_f(state);
+        } while (len > 0);
     }
 
-    // Update the state with a non-final block.
-    // NOTE: the input must be complete blocks.
-    function update(Instance memory instance, bytes memory data, uint data_len)
-        internal
-        view
-    {
-        require((data.length % 128) == 0);
-        update_loop(instance, data, data_len, false);
-    }
-
-    // Update the state with a final block and return the hash.
-    function finalize(Instance memory instance, bytes memory data, uint data_len)
-        internal
+    // Compute a hash of bytes.
+    function hash(uint out_len, bytes memory data)
+        public
         view
         returns (bytes memory output)
     {
-        // FIXME: support incomplete blocks (zero pad them)
-        assert((data.length % 128) == 0);
-        update_loop(instance, data, data_len, true);
+        require(out_len > 0 && out_len <= 64);
+        bytes memory state = init(out_len);
 
-        // FIXME: support other lengths
-        assert(instance.out_len == 64);
+        update_finalise(state, data);
 
-        bytes memory state = instance.state;
-        output = new bytes(instance.out_len);
+        bytes memory whole_output = new bytes(out_len > 32 ? 64 : 32);
         assembly {
-            mstore(add(output, 32), mload(add(state, 36)))
-            mstore(add(output, 64), mload(add(state, 68)))
+            mstore(add(whole_output, 32), mload(add(state, 36)))
+        }
+        if (out_len > 32) {
+            assembly {
+                mstore(add(whole_output, 64), mload(add(state, 68)))
+            }
+        }
+        if (out_len == 32 || out_len == 64) {
+            output = whole_output;
+        } else {
+            output = new bytes(out_len);
+            for (uint i = 0; i < out_len; ++i) {
+                output[i] = whole_output[i];
+            }
         }
     }
 }
