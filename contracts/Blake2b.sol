@@ -151,21 +151,34 @@ library Blake2b {
 
         update_finalise(state, data);
 
-        bytes memory whole_output = new bytes(out_len > 32 ? 64 : 32);
-        assembly {
-            mstore(add(whole_output, 32), mload(add(state, 36)))
-        }
-        if (out_len > 32) {
+        output = new bytes(out_len);
+
+        // We’ll just treat cases indivifually, because we can.
+        if (out_len < 32) {
+            uint mask = (1 << (8 * (WORD_SIZE - out_len))) - 1;
             assembly {
-                mstore(add(whole_output, 64), mload(add(state, 68)))
+                let out_ptr := add(output, 32)
+                let out_word := and(mload(add(state, /*32 + 4 =*/ 36)), not(mask))
+                let orig_word := and(mload(out_ptr), mask)
+                mstore(out_ptr, or(out_word, orig_word))
             }
-        }
-        if (out_len == 32 || out_len == 64) {
-            output = whole_output;
         } else {
-            output = new bytes(out_len);
-            for (uint i = 0; i < out_len; ++i) {
-                output[i] = whole_output[i];
+            // Copy first word.
+            assembly {
+                mstore(add(output, 32), mload(add(state, /*32 + 4 =*/ 36)))
+            }
+            if (out_len < 64) {
+                uint mask = (1 << (8 * (2 * WORD_SIZE - out_len))) - 1;
+                assembly {
+                    let out_ptr := add(output, /*32 + 32 =*/ 64)
+                    let out_word := and(mload(add(state, /*32 + 4 + 32 =*/ 68)), not(mask))
+                    let orig_word := and(mload(out_ptr), mask)
+                    mstore(out_ptr, or(out_word, orig_word))
+                }
+            } else {
+                assembly {
+                    mstore(add(output, /*32 + 32 =*/ 64), mload(add(state, /*32 + 4 + 32 =*/ 68)))
+                }
             }
         }
     }
