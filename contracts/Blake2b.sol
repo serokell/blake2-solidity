@@ -32,16 +32,6 @@ library Blake2b {
         // not the key and output length.
         state = hex"0000000c08c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
-        // Update parameter block 0 with key length and output length.
-        uint key_len = 0;
-        assembly {
-            let ptr := add(state, 36)
-            let tmp := mload(ptr)
-            let p0 := or(shl(240, key_len), shl(248, out_len))
-            tmp := xor(tmp, p0)
-            mstore(ptr, tmp)
-        }
-
         // TODO: support salt and personalization
     }
 
@@ -142,7 +132,7 @@ library Blake2b {
 
     // Compute a hash of bytes.
     function hash(uint out_len, bytes memory data)
-        public
+        internal
         view
         returns (bytes memory output)
     {
